@@ -1,138 +1,4 @@
 
-// import express from "express";
-// import multer from "multer";
-// import { exec } from "child_process";
-// import path from "path";
-// import fs from "fs";
-// import { fileURLToPath } from "url";
-// import cors from "cors";
-// import mongoose from "mongoose";
-// import dotenv from "dotenv";
-// import conversionRoutes from "./routes/conversionRoutes.js";
-// import conversion from "./model/conversion.js";
-
-// dotenv.config();
-
-// const __filename = fileURLToPath(import.meta.url);
-// const __dirname = path.dirname(__filename);
-
-// const app = express();
-// const upload = multer({ dest: path.join(__dirname, "uploads/") });
-
-// app.use(
-//   cors({
-//     origin: "http://localhost:8080", // frontend ka origin
-//     methods: ["GET", "POST"],
-//   })
-// );
-// app.use(express.json());
-
-// if (!fs.existsSync(path.join(__dirname, "uploads")))
-//   fs.mkdirSync(path.join(__dirname, "uploads"));
-// if (!fs.existsSync(path.join(__dirname, "converted")))
-//   fs.mkdirSync(path.join(__dirname, "converted"));
-
-// // ✅ Python path fix
-// const PYTHON_PATH = `"C:/Users/~Akash~/AppData/Local/Programs/Python/Python313/python.exe"`;
-// // ✅ convert.py ka absolute path
-// const CONVERT_SCRIPT = path.join(__dirname, "convert.py");
-
-// // MongoDB connect
-// mongoose
-//   .connect(process.env.MONGO_URI, {
-//     useNewUrlParser: true,
-//     useUnifiedTopology: true,
-//   })
-//   .then(() => console.log("✅ MongoDB connected"))
-//   .catch((err) => console.error("❌ MongoDB connection error:", err));
-
-// // Routes
-// app.use("/api/history", conversionRoutes);
-
-// // ✅ File convert API
-// app.post("/convert", upload.single("file"), (req, res) => {
-//   const { toType } = req.body;
-//   const inputPath = req.file.path;
-
-//   let outputExt = toType === "pdf" ? "pdf" : "docx";
-//   let outputPath = path.join(
-//     __dirname,
-//     "converted",
-//     `${Date.now()}.${outputExt}`
-//   );
-
-//   let cmd = "";
-
-//   if (toType === "docx") {
-//     // PDF → DOCX (Python script)
-//     cmd = `${PYTHON_PATH} "${CONVERT_SCRIPT}" "${inputPath}" "${outputPath}"`;
-//   } else if (toType === "pdf") {
-//     // DOCX → PDF (LibreOffice)
-//     cmd = `soffice --headless --convert-to pdf --outdir "${path.join(
-//       __dirname,
-//       "converted"
-//     )}" "${inputPath}"`;
-//   } else {
-//     return res.status(400).json({ error: "Invalid conversion type" });
-//   }
-
-//   // ✅ Run conversion
-//   exec(cmd, async (error, stdout, stderr) => {
-//     if (error) {
-//       console.error("Error:", error.message);
-//       return res.status(500).json({ error: "Conversion failed" });
-//     }
-
-//     console.log("Conversion Output:", stdout || stderr);
-
-//     let outputPathFinal = outputPath;
-
-//     if (toType === "pdf") {
-//       const baseName = path.basename(inputPath);
-//       outputPathFinal = path.join(__dirname, "converted", baseName + ".pdf");
-//     }
-
-//     if (!fs.existsSync(outputPathFinal)) {
-//       console.error("Output file not found:", outputPathFinal);
-//       return res.status(500).json({ error: "Converted file not found" });
-//     }
-
-//     // ✅ MongoDB me save karo
-//     try {
-//       const newRecord = new conversion({
-//         originalName: req.file.originalname,
-//         convertedName: path.basename(outputPathFinal),
-//         fromType: req.file.mimetype,
-//         toType,
-//         downloadUrl: `http://localhost:5000/${path.basename(outputPathFinal)}`,
-//       });
-
-//       await newRecord.save();
-//       console.log("✅ Conversion record saved in MongoDB");
-//     } catch (dbError) {
-//       console.error("❌ Failed to save record in MongoDB:", dbError);
-//     }
-
-//     // ✅ File download karwao
-//     res.download(outputPathFinal, (err) => {
-//       if (err) console.error("Download error:", err);
-
-//       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-
-//       setTimeout(() => {
-//         if (fs.existsSync(outputPathFinal)) fs.unlinkSync(outputPathFinal);
-//       }, 60000);
-//     });
-//   });
-// });
-
-// const PORT = process.env.PORT || 5000;
-// app.listen(PORT, () => {
-//   console.log(`✅ Server running on port ${PORT}`);
-// });
-
-
-
 import express from "express";
 import multer from "multer";
 import { exec } from "child_process";
@@ -152,108 +18,159 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// ✅ Dual-compatible folders (Windows + Linux)
-let UPLOAD_DIR;
-let CONVERT_DIR;
-
-if (process.platform === "win32") {
-  // Windows local dev
-  UPLOAD_DIR = path.join(__dirname, "uploads");
-  CONVERT_DIR = path.join(__dirname, "converted");
-} else {
-  // Linux / Render
-  UPLOAD_DIR = path.join("/tmp", "uploads");
-  CONVERT_DIR = path.join("/tmp", "converted");
+// Platform validation - only Windows and macOS supported
+const SUPPORTED_PLATFORMS = ['win32', 'darwin'];
+if (!SUPPORTED_PLATFORMS.includes(process.platform)) {
+  console.error(`❌ Unsupported platform: ${process.platform}. Only Windows and macOS supported.`);
+  process.exit(1);
 }
+
+// Directories
+const UPLOAD_DIR = path.join(__dirname, "uploads");
+const CONVERT_DIR = path.join(__dirname, "converted");
 
 // Ensure directories exist
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 if (!fs.existsSync(CONVERT_DIR)) fs.mkdirSync(CONVERT_DIR, { recursive: true });
 
-const upload = multer({ dest: UPLOAD_DIR });
+// Multer setup
+const upload = multer({ 
+  dest: UPLOAD_DIR,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/msword'];
+    cb(null, allowed.includes(file.mimetype));
+  }
+});
 
-// ✅ CORS – local dev + production frontend
-const allowedOrigins = [
-  "http://localhost:8080",
-  "https://pdftodocxconverter.netlify.app"
-];
-app.use(cors({ origin: allowedOrigins, methods: ["GET", "POST"] }));
-app.use(express.json());
+app.use(cors({ origin: "*", methods: ["GET","POST", "DELETE"], credentials:true }));
 
-// ✅ Python & LibreOffice
-const PYTHON_PATH = process.platform === "win32"
-  ? "python"        // Windows Python
-  : "python3";      // Linux / Render
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended:true, limit:'50mb' }));
+
+// Python & LibreOffice paths
+const pythonPath = "C:\\Users\\~Akash~\\AppData\\Local\\Programs\\Python\\Python313\\python.exe";
+const libreOfficePath = "C:\\Program Files\\LibreOffice\\program\\soffice.com";
+
 const CONVERT_SCRIPT = path.join(__dirname, "convert.py");
 
-// ✅ MongoDB
-const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/conversionDB";
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log("✅ MongoDB connected"))
-.catch(err => console.error("❌ MongoDB connection error:", err));
+// Verify dependencies
+const verifyDependencies = async () => new Promise((resolve,reject)=>{
+  exec(`"${pythonPath}" --version`, (err,stdout)=> {
+    if(err) return reject(new Error("Python missing"));
+    console.log("✅ Python:", stdout.trim());
 
-// Routes
-app.use("/api/history", conversionRoutes);
-
-// File convert API
-app.post("/convert", upload.single("file"), (req, res) => {
-  const { toType } = req.body;
-  const inputPath = req.file.path;
-
-  const outputExt = toType === "pdf" ? "pdf" : "docx";
-  let outputPath = path.join(CONVERT_DIR, `${Date.now()}.${outputExt}`);
-
-  let cmd = "";
-  if (toType === "docx") {
-    cmd = `${PYTHON_PATH} "${CONVERT_SCRIPT}" "${inputPath}" "${outputPath}"`;
-  } else if (toType === "pdf") {
-    cmd = `soffice --headless --convert-to pdf --outdir "${CONVERT_DIR}" "${inputPath}"`;
-  } else return res.status(400).json({ error: "Invalid conversion type" });
-
-  exec(cmd, async (error, stdout, stderr) => {
-    if (error) {
-      console.error("Error:", error.message);
-      return res.status(500).json({ error: "Conversion failed" });
-    }
-
-    console.log("Conversion Output:", stdout || stderr);
-
-    let outputPathFinal = toType === "pdf"
-      ? path.join(CONVERT_DIR, path.basename(inputPath) + ".pdf")
-      : outputPath;
-
-    if (!fs.existsSync(outputPathFinal)) {
-      console.error("Output file not found:", outputPathFinal);
-      return res.status(500).json({ error: "Converted file not found" });
-    }
-
-    try {
-      const newRecord = new conversion({
-        originalName: req.file.originalname,
-        convertedName: path.basename(outputPathFinal),
-        fromType: req.file.mimetype,
-        toType,
-        downloadUrl: `/downloads/${path.basename(outputPathFinal)}`
-      });
-      await newRecord.save();
-      console.log("✅ Conversion record saved in MongoDB");
-    } catch (dbError) {
-      console.error("❌ Failed to save record in MongoDB:", dbError);
-    }
-
-    // File download
-    res.download(outputPathFinal, (err) => {
-      if (err) console.error("Download error:", err);
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      setTimeout(() => {
-        if (fs.existsSync(outputPathFinal)) fs.unlinkSync(outputPathFinal);
-      }, 60000);
+    exec(`"${libreOfficePath}" --version`, (err,stdout)=> {
+      if(err) return reject(new Error("LibreOffice missing"));
+      console.log("✅ LibreOffice:", stdout.trim());
+      resolve();
     });
   });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+// MongoDB
+const connectMongoDB = async () => {
+  try {
+    const MONGO_URI = process.env.MONGO_URI;
+    if(!MONGO_URI) throw new Error("MONGO_URI required");
+    await mongoose.connect(MONGO_URI);
+    console.log("✅ MongoDB connected");
+  } catch(e){ console.error(e.message); throw e; }
+};
+
+// Routes
+app.use("/api/history", conversionRoutes);
+app.use("/api/conversions", conversionRoutes);
+
+// Health check
+app.get('/health',(req,res)=>res.json({status:'OK', platform:process.platform, timestamp:new Date().toISOString()}));
+
+// Conversion endpoint
+app.post("/convert", upload.single("file"), async (req,res)=>{
+  const { toType } = req.body;
+  if(!req.file) return res.status(400).json({error:"No file uploaded"});
+  if(!['pdf','docx'].includes(toType)) return res.status(400).json({error:"Invalid type"});
+
+  const inputPath = req.file.path;
+  const timestamp = Date.now();
+  const outputExt = toType === "pdf" ? "pdf":"docx";
+  const outputFileName = `converted_${timestamp}.${outputExt}`;
+  const outputPath = path.join(CONVERT_DIR, outputFileName);
+  try {
+    let cmd = "";
+    if(toType==="docx"){
+      if(!fs.existsSync(CONVERT_SCRIPT)) throw new Error("Python conversion script missing");
+      cmd = `"${pythonPath}" "${CONVERT_SCRIPT}" "${inputPath}" "${outputPath}"`;
+    } else {
+      cmd = `"${libreOfficePath}" --headless /NoSplash --convert-to pdf --outdir "${CONVERT_DIR}" "${inputPath}"`;
+    }
+
+    console.log("🔄 Executing:", cmd);
+    exec(cmd, {timeout:60000}, async (err,stdout,stderr)=>{
+      if(err) return res.status(500).json({error:"Conversion failed", details:err.message});
+
+      if(toType==="pdf"){
+        const origName = path.basename(inputPath,path.extname(inputPath));
+        const loOut = path.join(CONVERT_DIR, `${origName}.pdf`);
+        if(fs.existsSync(loOut)) fs.renameSync(loOut, outputPath);
+      }
+
+      if(!fs.existsSync(outputPath)) return res.status(500).json({error:"Output file not found"});
+
+      // Save DB record
+      try{
+        const newRecord = new conversion({
+          originalName:req.file.originalname,
+          convertedName:path.basename(outputPath),
+          fromType:req.file.mimetype,
+          toType,
+          downloadUrl:`/downloads/${path.basename(outputPath)}`,
+          createdAt:new Date()
+        });
+        await newRecord.save();
+      }catch(e){ console.error("DB save error:",e.message); }
+
+      // Send file
+      res.download(outputPath, `converted_${req.file.originalname}.${outputExt}`, (dErr)=>{
+        setTimeout(()=>{
+          try{
+            if(fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+            if(fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+          }catch(e){ console.error("Cleanup error:",e.message); }
+        },5000);
+        if(dErr) console.error("Download error:",dErr.message);
+      });
+    });
+
+  } catch(e){
+    console.error("Conversion setup error:", e.message);
+    if(fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    res.status(500).json({error:"Conversion setup failed"});
+  }
+});
+
+// Error & 404 handling
+app.use((err,req,res,next)=>{
+  if(err instanceof multer.MulterError && err.code==='LIMIT_FILE_SIZE') return res.status(400).json({error:"File too large"});
+  console.error("Unhandled error:", err.message);
+  res.status(500).json({error:"Internal server error"});
+});
+app.use((req,res)=>res.status(404).json({error:"Route not found"}));
+
+// Start server
+const startServer = async ()=>{
+  try{
+    console.log("🖥️ Platform:", process.platform);
+    await verifyDependencies();
+    await connectMongoDB();
+
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT,()=>console.log(`✅ Server running on port ${PORT}`));
+  }catch(e){ console.error("❌ Failed to start server:",e.message); process.exit(1);}
+};
+
+// Graceful shutdown
+process.on('SIGINT',()=>{ mongoose.connection.close(); process.exit(0); });
+process.on('SIGTERM',()=>{ mongoose.connection.close(); process.exit(0); });
+
+startServer();
